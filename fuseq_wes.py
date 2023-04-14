@@ -5,7 +5,7 @@ import argparse
 import re
 import json
 import pysam
-
+from intervaltree_bio import GenomeIntervalTree
 
 cigarPattern = '([0-9]+[MIDNSHP])'
 cigarSearch = re.compile(cigarPattern)
@@ -40,6 +40,40 @@ def load_gtf(genes_gtf):
                     else:
                         gtf_lookup[chrom] = {transcript_id: [start, end]}
     return gtf_lookup
+
+
+def process_intervals(json):
+    # one time process, converting gtf file to json with transcripts, start, end
+    gtree = GenomeIntervalTree()
+    for chromosom, data in json.items(): 
+        for key, value in data.items():
+            gtree.addi(chromosom, value[0], value[1], key)
+    return gtree
+        
+    # for line in fh.readlines():
+    #     if '\ttranscript\t' in line:
+    #         data = line.strip().split('\t')
+    #         chrom = data[0].replace('chr', '')
+    #         start = int(data[3])
+    #         end = int(data[4])
+    #         strand = data[6]
+    #         info = data[8].split(';')
+    #         transcript_id = info[1].split()[1].replace('"', '')
+    #         gene_id = info[0].split()[1].replace('"', '')
+    #         if '-AS1' in gene_id:
+    #             #for key, pos in gtf_lookup[chrom].items():
+    #             #    gene_name = get_genename(key)
+    #             #    if gene_name in gene_id:
+    #             #        if (pos[0] <= start and start <= pos[1]) or \
+    #             #            (pos[0] <= end and end <= pos[1]):
+    #             #            gtf_lookup[chrom][key].append(transcript_id)
+    #         else:
+    #             gtree.addi(chrom, start, end, [transcript_id, ])
+    #             if chrom in gtf_lookup:
+    #                 gtf_lookup[chrom].update({transcript_id: [start, end]})
+    #             else:
+    #                 gtf_lookup[chrom] = {transcript_id: [start, end]}
+    # return gtf_lookup
 
 
 def extractCigarOps(cigar, flag):
@@ -130,15 +164,30 @@ def checkOverlap(readCigar, mateCigar, readFlag, mateFlag, minNonOverlap):
     return False
 
 
+# def get_transcript(chrom, start):
+#     if chrom in gtf_lookup:
+#         for transcript, pos in gtf_lookup[chrom].items():
+#             if pos[0] <= start and start <= int(pos[1]):
+#                 if len(pos) > 2:
+#                     return [transcript, pos[2]]
+#                 else:
+#                     return [transcript]
+#     return ''
+
 def get_transcript(chrom, start):
-    if chrom in gtf_lookup:
-        for transcript, pos in gtf_lookup[chrom].items():
-            if pos[0] <= start and start <= int(pos[1]):
-                if len(pos) > 2:
-                    return [transcript, pos[2]]
-                else:
-                    return [transcript]
-    return ''
+    def extract_first_element(s):
+        for e in s:
+            break
+        return e
+    
+    data = gtf_lookup[chrom].at(start) #, start+1)
+    #print(data)
+    if data:
+        print(data)
+        e = extract_first_element(data)
+        return [e.data]
+    else:
+        return ''
 
 
 def get_genename(transcript):
@@ -198,8 +247,8 @@ feq_class = dict()
 split_reads = set()
 
 with open(args.gtf, 'r') as jsonfile:
-    gtf_lookup = json.loads(jsonfile.read())
-
+#    global gtf_lookup
+    gtf_lookup = process_intervals(json.loads(jsonfile.read()))
 # gtf_json = open("/proj/snic2020-6-4/sarath/Results/BeatAML/UCSC_hg19_wes_contigSize3000_bigLen130000_r76.json", "w")
 # gtf_json.write(json.dumps(gtf_lookup, indent = 4))
 
@@ -249,7 +298,7 @@ for read in samfile.fetch():
 
     # Annotating split reads with transcript information
     if split:
-
+        
         frst_txts = get_transcript(read_chrom, read.reference_start)
         mate_txts = get_transcript(mate_chrom, read.next_reference_start)
 
@@ -270,10 +319,10 @@ for read in samfile.fetch():
         frst_hitpos = ','.join(map(str, calcHitpos(read.pos, frst_txts)))
         sec_hitpos = ','.join(map(str, calcHitpos(saStart, sec_txts)))
         mate_hitpos = ','.join(map(str, calcHitpos(read.mpos, mate_txts)))
-
+        #print(frst_txts)
         # Writing split reads into output file
         if frst_txts != '' and sec_txts != '' and mate_txts != '' and\
-           frst_gene != sec_gene:
+        frst_gene != sec_gene:
             sr_output.write("\t".join(map(str, [read.query_name, read_type, read_direction, ','.join(frst_txts), frst_gene,
                             frst_hitpos, readQueryPos.qsPos, readQueryPos.qLen, ','.join(sec_txts), sec_gene, sec_hitpos,
                             mateQueryPos.qsPos, mateQueryPos.qLen, mate_gene, mate_direction, mate_hitpos])) + '\n')
@@ -299,7 +348,7 @@ for read in samfile.fetch():
         mate_txts = get_transcript(mate_chrom, read.next_reference_start)
 
         if ref_txts != '' and mate_txts != '' and ref_txts != mate_txts and\
-           read.mapping_quality >= 30:
+        read.mapping_quality >= 30:
             read_ftx[read.query_name] = discordantReads(read, ref_txts, mate_txts)
 
             if read.query_name in reads:
